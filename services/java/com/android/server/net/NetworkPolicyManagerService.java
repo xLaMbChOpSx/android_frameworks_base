@@ -695,7 +695,8 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                 // mobile templates are relevant when SIM is ready and
                 // subscriberId matches.
                 if (tele.getSimState() == SIM_STATE_READY) {
-                    return Objects.equal(tele.getSubscriberId(), template.getSubscriberId());
+                    return Objects.equal(((android.privacy.surrogate.PrivacyTelephonyManager)tele).getSafeSubscriberId(), template.getSubscriberId());
+                	//return true;
                 } else {
                     return false;
                 }
@@ -953,7 +954,7 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                 // TODO: offer more granular control over radio states once
                 // 4965893 is available.
                 if (tele.getSimState() == SIM_STATE_READY
-                        && Objects.equal(tele.getSubscriberId(), template.getSubscriberId())) {
+                        && Objects.equal(((android.privacy.surrogate.PrivacyTelephonyManager)tele).getSafeSubscriberId(), template.getSubscriberId())) {
                     setPolicyDataEnable(TYPE_MOBILE, enabled);
                     setPolicyDataEnable(TYPE_WIMAX, enabled);
                 }
@@ -1109,7 +1110,7 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
         // avoid creating policy when SIM isn't ready
         if (tele.getSimState() != SIM_STATE_READY) return;
 
-        final String subscriberId = tele.getSubscriberId();
+        final String subscriberId = ((android.privacy.surrogate.PrivacyTelephonyManager)tele).getSafeSubscriberId();
         final NetworkIdentity probeIdent = new NetworkIdentity(
                 TYPE_MOBILE, TelephonyManager.NETWORK_TYPE_UNKNOWN, subscriberId, null, false);
 
@@ -1157,6 +1158,11 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
 
             int type;
             int version = VERSION_INIT;
+            
+            //----------------------------------------------------
+            final TelephonyManager tele = TelephonyManager.from(mContext);
+            //----------------------------------------------------
+            
             while ((type = in.next()) != END_DOCUMENT) {
                 final String tag = in.getName();
                 if (type == START_TAG) {
@@ -1171,7 +1177,7 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
 
                     } else if (TAG_NETWORK_POLICY.equals(tag)) {
                         final int networkTemplate = readIntAttribute(in, ATTR_NETWORK_TEMPLATE);
-                        final String subscriberId = in.getAttributeValue(null, ATTR_SUBSCRIBER_ID);
+                        final String subscriberId = ((android.privacy.surrogate.PrivacyTelephonyManager)tele).getSafeSubscriberId();//in.getAttributeValue(null, ATTR_SUBSCRIBER_ID);
                         final String networkId;
                         if (version >= VERSION_ADDED_NETWORK_ID) {
                             networkId = in.getAttributeValue(null, ATTR_NETWORK_ID);
@@ -1458,7 +1464,6 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
 
     private void addNetworkPolicyLocked(NetworkPolicy policy) {
         mNetworkPolicy.put(policy.template, policy);
-
         updateNetworkEnabledLocked();
         updateNetworkRulesLocked();
         updateNotificationsLocked();
@@ -1507,7 +1512,6 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                 default:
                     throw new IllegalArgumentException("unexpected type");
             }
-
             updateNetworkEnabledLocked();
             updateNetworkRulesLocked();
             updateNotificationsLocked();
@@ -1633,7 +1637,6 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                 for (NetworkPolicy policy : mNetworkPolicy.values()) {
                     policy.clearSnooze();
                 }
-
                 updateNetworkEnabledLocked();
                 updateNetworkRulesLocked();
                 updateNotificationsLocked();
@@ -1914,7 +1917,6 @@ public class NetworkPolicyManagerService extends INetworkPolicyManager.Stub {
                             } catch (RemoteException e) {
                                 // ignored; service lives in system_server
                             }
-
                             updateNetworkEnabledLocked();
                             updateNotificationsLocked();
                         }

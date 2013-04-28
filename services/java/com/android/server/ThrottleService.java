@@ -76,7 +76,7 @@ public class ThrottleService extends IThrottleManager.Stub {
 
     private static final String TAG = "ThrottleService";
     private static final boolean DBG = true;
-    private static final boolean VDBG = false;
+    private static final boolean VDBG = true;
     private Handler mHandler;
     private HandlerThread mThread;
 
@@ -936,6 +936,7 @@ public class ThrottleService extends IThrottleManager.Stub {
             File throttleDir = new File(dataDir, "system/throttle");
             throttleDir.mkdirs();
             String mImsi = mTelephonyManager.getSubscriberId();
+	    Slog.v(TAG,"got subscriberId from telephony Manager: " + mImsi);
             File dataFile;
             if (mImsi == null) {
                 dataFile = useMRUFile(throttleDir);

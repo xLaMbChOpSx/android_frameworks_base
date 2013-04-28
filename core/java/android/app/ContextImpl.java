@@ -66,7 +66,7 @@ import android.location.ILocationManager;
 import android.location.LocationManager;
 import android.media.AudioManager;
 import android.media.MediaRouter;
-import android.net.ConnectivityManager;
+//import android.net.ConnectivityManager;
 import android.net.IConnectivityManager;
 import android.net.INetworkPolicyManager;
 import android.net.NetworkPolicyManager;
@@ -117,6 +117,16 @@ import android.accounts.AccountManager;
 import android.accounts.IAccountManager;
 import android.app.admin.DevicePolicyManager;
 import com.android.internal.os.IDropBoxManagerService;
+
+// BEGIN privacy-added
+import android.privacy.IPrivacySettingsManager;
+import android.privacy.PrivacySettingsManager;
+import android.privacy.surrogate.PrivacyAccountManager;
+import android.privacy.surrogate.PrivacyLocationManager;
+import android.privacy.surrogate.PrivacyTelephonyManager;
+import android.privacy.surrogate.PrivacyWifiManager;
+import android.privacy.surrogate.PrivacyConnectivityManager;
+// END privacy-added
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -193,6 +203,9 @@ class ContextImpl extends Context {
     private Resources mResources;
     /*package*/ ActivityThread mMainThread;
     private Context mOuterContext;
+    // BEGIN privacy-added
+    private static Context sOuterContext;
+    // END privacy-added
     private IBinder mActivityToken = null;
     private ApplicationContentResolver mContentResolver;
     private int mThemeResource = 0;
@@ -308,7 +321,10 @@ class ContextImpl extends Context {
                 public Object createService(ContextImpl ctx) {
                     IBinder b = ServiceManager.getService(ACCOUNT_SERVICE);
                     IAccountManager service = IAccountManager.Stub.asInterface(b);
-                    return new AccountManager(ctx, service);
+                    //return new AccountManager(ctx, service);
+                    // BEGIN privacy-modified
+                    return new PrivacyAccountManager(ctx, service);
+                    // END privacy-modified
                 }});
 
         registerService(ACTIVITY_SERVICE, new ServiceFetcher() {
@@ -347,7 +363,11 @@ class ContextImpl extends Context {
         registerService(CONNECTIVITY_SERVICE, new StaticServiceFetcher() {
                 public Object createStaticService() {
                     IBinder b = ServiceManager.getService(CONNECTIVITY_SERVICE);
-                    return new ConnectivityManager(IConnectivityManager.Stub.asInterface(b));
+                    //BEGIN PRIVACY ADDED
+                    //return new ConnectivityManager(IConnectivityManager.Stub.asInterface(b));
+                    IConnectivityManager service = IConnectivityManager.Stub.asInterface(b);
+                    return new PrivacyConnectivityManager(service, getStaticOuterContext());
+                    //END PRIVACY ADDED
                 }});
 
         registerService(COUNTRY_DETECTOR, new StaticServiceFetcher() {
@@ -413,8 +433,15 @@ class ContextImpl extends Context {
 
         registerService(LOCATION_SERVICE, new ServiceFetcher() {
                 public Object createService(ContextImpl ctx) {
-                    IBinder b = ServiceManager.getService(LOCATION_SERVICE);
-                    return new LocationManager(ctx, ILocationManager.Stub.asInterface(b));
+                    
+	            IBinder b = ServiceManager.getService(LOCATION_SERVICE);
+
+	            //return new LocationManager(ctx, ILocationManager.Stub.asInterface(b));
+		    
+	            // BEGIN privacy-modified
+	            return new PrivacyLocationManager(ILocationManager.Stub.asInterface(b), getStaticOuterContext());
+	            // END privacy-modified
+                    
                 }});
 
         registerService(NETWORK_POLICY_SERVICE, new ServiceFetcher() {
@@ -485,7 +512,10 @@ class ContextImpl extends Context {
 
         registerService(TELEPHONY_SERVICE, new ServiceFetcher() {
                 public Object createService(ContextImpl ctx) {
-                    return new TelephonyManager(ctx.getOuterContext());
+                    //return new TelephonyManager(ctx.getOuterContext());
+                    // BEGIN privacy-modified
+                    return new PrivacyTelephonyManager(ctx.getOuterContext());
+                    // END privacy-modified
                 }});
 
         registerService(THROTTLE_SERVICE, new StaticServiceFetcher() {
@@ -522,7 +552,10 @@ class ContextImpl extends Context {
                 public Object createService(ContextImpl ctx) {
                     IBinder b = ServiceManager.getService(WIFI_SERVICE);
                     IWifiManager service = IWifiManager.Stub.asInterface(b);
-                    return new WifiManager(ctx.getOuterContext(), service);
+                    // BEGIN privacy
+                    //return new WifiManager(ctx.getOuterContext(), service);
+                    return new PrivacyWifiManager(service, ctx);
+                    // END privacy
                 }});
 
         registerService(WIFI_P2P_SERVICE, new ServiceFetcher() {
@@ -574,6 +607,14 @@ class ContextImpl extends Context {
                     IFmTransmitter service = IFmTransmitter.Stub.asInterface(b);
                     return new FmTransmitterImpl(service);
                 }});
+        		// BEGIN privacy-added
+        		registerService("privacy", new StaticServiceFetcher() {
+                public Object createStaticService() {
+                    IBinder b = ServiceManager.getService("privacy");
+                    IPrivacySettingsManager service = IPrivacySettingsManager.Stub.asInterface(b);
+                    return new PrivacySettingsManager(getStaticOuterContext(),service);
+                }});
+        		// END privacy-added
     }
 
     static ContextImpl getImpl(Context context) {
@@ -1082,7 +1123,8 @@ class ContextImpl extends Context {
 
     @Override
     public void sendBroadcast(Intent intent) {
-        warnIfCallingFromSystemProcess();
+    	if(!isPrivacyBroadCast(intent))
+    		warnIfCallingFromSystemProcess();
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
             intent.setAllowFds(false);
@@ -1096,7 +1138,8 @@ class ContextImpl extends Context {
 
     @Override
     public void sendBroadcast(Intent intent, String receiverPermission) {
-        warnIfCallingFromSystemProcess();
+    	if(!isPrivacyBroadCast(intent))
+    		warnIfCallingFromSystemProcess();
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
             intent.setAllowFds(false);
@@ -1111,7 +1154,8 @@ class ContextImpl extends Context {
     @Override
     public void sendOrderedBroadcast(Intent intent,
             String receiverPermission) {
-        warnIfCallingFromSystemProcess();
+    	if(!isPrivacyBroadCast(intent))
+    		warnIfCallingFromSystemProcess();
         String resolvedType = intent.resolveTypeIfNeeded(getContentResolver());
         try {
             intent.setAllowFds(false);
@@ -1765,6 +1809,18 @@ class ContextImpl extends Context {
                       message);
     }
 
+    /**
+     * checks if current intent is a privacy related intent
+     * @param intent current intent
+     * @return true if intent contains privacy notifications, false otherwise
+     */
+    private boolean isPrivacyBroadCast(Intent intent) {
+    	if(intent != null && intent.getAction() != null && intent.getAction().equals(PrivacySettingsManager.ACTION_PRIVACY_NOTIFICATION))
+    		return true;
+    	else
+    		return false;
+    }
+    
     private void warnIfCallingFromSystemProcess() {
         if (Process.myUid() == Process.SYSTEM_UID) {
             Slog.w(TAG, "Calling a method in the system process without a qualified user: "
@@ -1887,7 +1943,7 @@ class ContextImpl extends Context {
     }
 
     ContextImpl() {
-        mOuterContext = this;
+        sOuterContext = mOuterContext = this;
     }
 
     /**
@@ -1904,7 +1960,7 @@ class ContextImpl extends Context {
         mContentResolver = context.mContentResolver;
         mUser = context.mUser;
         mDisplay = context.mDisplay;
-        mOuterContext = this;
+        sOuterContext = mOuterContext = this;
     }
 
     static void init(ActivityThread thread) {
@@ -2045,11 +2101,15 @@ class ContextImpl extends Context {
     }
 
     final void setOuterContext(Context context) {
-        mOuterContext = context;
+        sOuterContext = mOuterContext = context;
     }
 
     final Context getOuterContext() {
         return mOuterContext;
+    }
+
+    final static Context getStaticOuterContext() {
+        return sOuterContext;
     }
 
     final IBinder getActivityToken() {

@@ -59,6 +59,18 @@ import java.net.URISyntaxException;
 import java.util.HashMap;
 import java.util.HashSet;
 
+//////////////////////////////////////////////////
+import android.content.pm.IPackageManager;
+import android.os.ServiceManager;
+import android.os.Process;
+import java.util.Random;
+
+import android.privacy.IPrivacySettingsManager;
+import android.privacy.PrivacySettings;
+import android.privacy.PrivacySettingsManager;
+import android.privacy.utilities.PrivacyDebugger;
+//////////////////////////////////////////////////
+
 /**
  * The Settings provider contains global system-level device preferences.
  */
@@ -4368,7 +4380,65 @@ public final class Settings {
         public static void getMovedKeys(HashSet<String> outKeySet) {
             outKeySet.addAll(MOVED_TO_GLOBAL);
         }
-
+        
+		/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		//BEGIN PRIVACY 
+		
+		private static final String PRIVACY_TAG = "PM,SecureSettings";
+		private static Context context;
+		
+		private static PrivacySettingsManager pSetMan;
+		
+		private static IPackageManager mPm;
+		
+		//END PRIVACY 		
+		//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		
+		
+		//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+		//BEGIN PRIVACY
+		
+		/**
+		* {@hide}
+		* @return package names of current process which is using this object or null if something went wrong
+		*/
+		private static String[] getPackageName(){
+			try{
+				if(mPm != null){
+					int uid = Process.myUid();
+					final String[] package_names = mPm.getPackagesForUid(uid);
+					return package_names;
+				}
+				else{
+					mPm = IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+					int uid = Process.myUid();
+					final String[] package_names = mPm.getPackagesForUid(uid);
+					return package_names;
+				}
+			}
+			catch(Exception e){
+				PrivacyDebugger.e(PRIVACY_TAG,"something went wrong with getting package name", e);
+				return null;
+			}
+		}
+		/**
+		* {@hide}
+		* This method sets up all variables which are needed for privacy mode! It also writes to privacyMode, if everything was successfull or not! 
+		* -> privacyMode = true ok! otherwise false!
+		*/
+		private static void initiate(){
+			try{
+				context = null;
+				pSetMan = new PrivacySettingsManager(context, IPrivacySettingsManager.Stub.asInterface(ServiceManager.getService("privacy")));
+				mPm = IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+			}
+			catch(Exception e){
+				PrivacyDebugger.e(PRIVACY_TAG, "Something went wrong with initalize variables", e);
+			}
+		}
+		//END PRIVACY
+		//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        
         /**
          * Look up a name in the database.
          * @param resolver to access the database with
@@ -4382,6 +4452,66 @@ public final class Settings {
         /** @hide */
         public static String getStringForUser(ContentResolver resolver, String name,
                 int userHandle) {
+        	
+			//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+			//BEGIN PRIVACY
+			if(name.equals(ANDROID_ID)){ //normally it should work with sNameValueCache.getString instead of sLockSettings
+				initiate();
+				try{
+					PrivacyDebugger.i(PRIVACY_TAG, "getStringForUser - entry");
+					if(pSetMan == null) pSetMan = new PrivacySettingsManager(context, IPrivacySettingsManager.Stub.asInterface(ServiceManager.getService("privacy")));
+					if(mPm == null) mPm = IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+					PrivacySettings settings = null;
+					final String[] packages = getPackageName();
+					if(packages != null && packages.length > 0) {
+						for(int i = 0; i < packages.length; i++){
+							settings = pSetMan.getSettings(packages[i]);
+							if(settings != null && settings.getAndroidIdSetting() != PrivacySettings.REAL){
+								String output = settings.getAndroidID();
+								if(output != null) {
+									if(settings.isDefaultDenyObject())
+										pSetMan.notification(packages[i], 0, PrivacySettings.ERROR, PrivacySettings.DATA_ANDROID_ID, output, null);
+									else
+										pSetMan.notification(packages[i], 0, settings.getAndroidIdSetting(), PrivacySettings.DATA_ANDROID_ID, output, null);
+									return output;
+								} else {
+									if(settings.isDefaultDenyObject())
+										pSetMan.notification(packages[i], 0, PrivacySettings.ERROR, PrivacySettings.DATA_ANDROID_ID, "q4a5w896ay21dr46", null);
+									else
+										pSetMan.notification(packages[i], 0, settings.getAndroidIdSetting(), PrivacySettings.DATA_ANDROID_ID, "q4a5w896ay21dr46", null);
+									return "q4a5w896ay21dr46"; 
+								}
+							}
+							if(i == packages.length - 1) {//package is allowed to get android id
+								if(settings != null && settings.isDefaultDenyObject())
+									pSetMan.notification(packages[packages.length - 1], 0, PrivacySettings.ERROR, PrivacySettings.DATA_ANDROID_ID, null, null);
+								else
+									pSetMan.notification(packages[packages.length - 1], 0, PrivacySettings.REAL, PrivacySettings.DATA_ANDROID_ID, null, null);
+							}
+								
+							settings = null;
+						}
+					} else {
+						PrivacyDebugger.e(PRIVACY_TAG, "packages are null, now handle default deny mode");
+						switch(PrivacySettings.CURRENT_DEFAULT_DENY_MODE) {
+							case PrivacySettings.DEFAULT_DENY_EMPTY:
+							case PrivacySettings.DEFAULT_DENY_RANDOM:
+								PrivacyDebugger.w(TAG,"users default deny mode is empty or random, handle it! output: q4a5w896ay21dr46");
+								return "q4a5w896ay21dr46";
+							case PrivacySettings.DEFAULT_DENY_REAL:
+								PrivacyDebugger.w(TAG, "users default deny mode is real. output: real android id");
+								break;
+						}
+						pSetMan.notification("UNKNOWN", 0, PrivacySettings.ERROR, PrivacySettings.DATA_ANDROID_ID, null, null);
+					}
+				}
+				catch (Exception e){
+					PrivacyDebugger.e(PRIVACY_TAG,"Got exception in  getStringForUser", e);
+				}
+			}
+			//END PRIVACY
+			//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
             if (MOVED_TO_GLOBAL.contains(name)) {
                 Log.w(TAG, "Setting " + name + " has moved from android.provider.Settings.Secure"
                         + " to android.provider.Settings.Global.");

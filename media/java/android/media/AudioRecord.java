@@ -29,6 +29,23 @@ import android.os.Looper;
 import android.os.Message;
 import android.util.Log;
 
+////////////////////////////////////////////
+import android.app.ActivityThread;
+import android.app.Application;
+import android.content.Context;
+import android.content.pm.IPackageManager;
+import android.content.pm.PackageManager;
+import android.os.Binder;
+
+import android.os.Process;
+import android.os.ServiceManager;
+
+import android.privacy.IPrivacySettingsManager;
+import android.privacy.PrivacySettings;
+import android.privacy.PrivacySettingsManager;
+import android.privacy.utilities.PrivacyDebugger;
+///////////////////////////////////////////
+
 /**
  * The AudioRecord class manages the audio resources for Java applications
  * to record audio from the audio input hardware of the platform. This is
@@ -190,6 +207,28 @@ public class AudioRecord
      */
     private int mSessionId = 0;
 
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //BEGIN PRIVACY 
+
+    private static final int IS_ALLOWED = -1;
+    private static final int IS_NOT_ALLOWED = -2;
+    private static final int GOT_ERROR = -3;
+    
+    private static final String PRIVACY_TAG = "PM,AudioRecord";
+    private Context context;
+    
+    private PrivacySettingsManager pSetMan;
+    
+    private boolean privacyMode = false;
+    
+    private IPackageManager mPm;
+    
+    //END PRIVACY
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
     //---------------------------------------------------------
     // Constructor, Finalize
     //--------------------
@@ -242,10 +281,124 @@ public class AudioRecord
             return; // with mState == STATE_UNINITIALIZED
         }
 
+	//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+        //BEGIN PRIVACY
+        
+        initiate();
+       
+        //END PRIVACY
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
         mSessionId = session[0];
 
         mState = STATE_INITIALIZED;
     }
+
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    //BEGIN PRIVACY
+    /**
+     * {@hide}
+     * @return package names of current process which is using this object or null if something went wrong
+     */
+    private String[] getPackageName(){
+    	try{
+    		if(mPm != null){
+        		int uid = Process.myUid();
+        		String[] package_names = mPm.getPackagesForUid(uid);
+        		return package_names;
+        	}
+    		else{
+    			mPm = IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+    			int uid = Process.myUid();
+        		String[] package_names = mPm.getPackagesForUid(uid);
+        		return package_names;
+    		}
+    	}
+    	catch(Exception e){
+    		PrivacyDebugger.e(PRIVACY_TAG,"something went wrong with getting package name", e);
+    		return null;
+    	}
+    }
+    /**
+     * {@hide}
+     * This method sets up all variables which are needed for privacy mode! It also writes to privacyMode, if everything was successfull or not! 
+     * -> privacyMode = true ok! otherwise false!
+     * CALL THIS METHOD IN CONSTRUCTOR!
+     */
+    private void initiate(){
+    	try{
+    		context = null;
+    		pSetMan = new PrivacySettingsManager(context, IPrivacySettingsManager.Stub.asInterface(ServiceManager.getService("privacy")));
+    		mPm = IPackageManager.Stub.asInterface(ServiceManager.getService("package"));
+       	 	privacyMode = true;
+    	}
+    	catch(Exception e){
+    		PrivacyDebugger.e(PRIVACY_TAG, "Something went wrong with initalize variables", e);
+    		privacyMode = false;
+    	}
+    }
+    /**
+     * This method should be used, because in some devices the uid has more than one package within!
+     * It also includes the notification! It also handles the default deny mode!
+     * @return IS_ALLOWED (-1) if all packages allowed, IS_NOT_ALLOWED(-2) if one of these packages not allowed
+     */
+    private int checkIfPackagesAllowed(){
+    	try{
+    		if(pSetMan == null) 
+    			pSetMan = new PrivacySettingsManager(context, IPrivacySettingsManager.Stub.asInterface(ServiceManager.getService("privacy")));
+			PrivacySettings pSet = null;
+    		String[] package_names = getPackageName();
+    		if(package_names != null){
+	        	for(String pack : package_names){
+	        		pSet = pSetMan.getSettings(pack);
+	        		if(pSet != null && (pSet.getRecordAudioSetting() != PrivacySettings.REAL)){ //if pSet is null, we allow application to access to mic
+	        			if(pSet.isDefaultDenyObject())
+	        				pSetMan.notification(pack, 0, PrivacySettings.ERROR, PrivacySettings.DATA_RECORD_AUDIO, null, null);
+	        			else
+	        				pSetMan.notification(pack, 0, PrivacySettings.EMPTY, PrivacySettings.DATA_RECORD_AUDIO, null, null);
+	        			PrivacyDebugger.i(TAG, "package: " + pack + " is not allowed to access microphone. Default deny mode on: " + pSet.isDefaultDenyObject());
+	        			return IS_NOT_ALLOWED;
+	        		}
+	        		pSet = null;
+	        	}
+	        	PrivacyDebugger.w(PRIVACY_TAG,"allowing package: " + package_names[0] + " accessing the microphone");
+	        	pSetMan.notification(package_names[0], 0, PrivacySettings.REAL, PrivacySettings.DATA_RECORD_AUDIO, null, null);
+		    	return IS_ALLOWED;
+    		}
+    		else{
+    			int output;
+    			PrivacyDebugger.w(PRIVACY_TAG, "can't parse packages, going to apply default deny mode");
+    			if(PrivacySettings.CURRENT_DEFAULT_DENY_MODE != PrivacySettings.DEFAULT_DENY_REAL) {
+    				pSetMan.notification("UNKNOWN", 0, PrivacySettings.ERROR, PrivacySettings.DATA_RECORD_AUDIO, null, null);	
+    				output = IS_NOT_ALLOWED;
+    			} else {
+    				pSetMan.notification("UNKNOWN", 0, PrivacySettings.ERROR, PrivacySettings.DATA_RECORD_AUDIO, null, null);	
+    				output = IS_ALLOWED;
+    			}
+    			return output;
+    		}
+    		
+    	}
+    	catch (Exception e){
+    		PrivacyDebugger.e(PRIVACY_TAG,"Got exception in checkIfPackagesAllowed()", e);
+    		int output;
+    		PrivacyDebugger.e(PRIVACY_TAG, "got error while trying to check permission. Going to apply default deny mode.");
+    		if(PrivacySettings.CURRENT_DEFAULT_DENY_MODE != PrivacySettings.DEFAULT_DENY_REAL) {
+				pSetMan.notification("UNKNOWN", 0, PrivacySettings.ERROR, PrivacySettings.DATA_RECORD_AUDIO, null, null);	
+				output = IS_NOT_ALLOWED;
+			} else {
+				pSetMan.notification("UNKNOWN", 0, PrivacySettings.ERROR, PrivacySettings.DATA_RECORD_AUDIO, null, null);	
+				output = IS_ALLOWED;
+			}
+    		return output;
+    	}
+    }
+
+    //END PRIVACY
+    //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////    
+
+
 
 
     // Convenience method for the constructor's parameter checks.
@@ -528,10 +681,19 @@ public class AudioRecord
      */
     public void startRecording()
     throws IllegalStateException {
-        if (mState != STATE_INITIALIZED) {
-            throw(new IllegalStateException("startRecording() called on an "
-                    +"uninitialized AudioRecord."));
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    	//BEGIN PRIVACY
+    	//now check if everything was ok in constructor!
+    	if(!privacyMode){
+    		initiate();
+    	}
+        if ((mState != STATE_INITIALIZED) || (checkIfPackagesAllowed() == IS_NOT_ALLOWED)) { //If applicaton is not allowed -> throw exception!
+            throw(new IllegalStateException("startRecording() called on an uninitialized AudioRecord."));
         }
+        //END PRIVACY
+        //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
         // start recording
         synchronized(mRecordingStateLock) {
