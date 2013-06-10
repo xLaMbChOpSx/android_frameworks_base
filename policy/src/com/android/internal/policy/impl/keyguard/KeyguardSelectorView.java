@@ -19,7 +19,6 @@ import java.io.File;
 import java.net.URISyntaxException;
 
 import android.animation.ObjectAnimator;
-import android.app.ActivityManagerNative;
 import android.app.SearchManager;
 import android.app.admin.DevicePolicyManager;
 import android.content.BroadcastReceiver;
@@ -54,7 +53,6 @@ import android.content.res.Resources;
 import android.graphics.drawable.Drawable;
 import android.os.Handler;
 import android.os.Message;
-import android.os.RemoteException;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -115,7 +113,7 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
     private String[] targetActivities = new String[8];
     private String[] longActivities = new String[8];
     private String[] customIcons = new String[8];
-    private UnlockReceiver receiver;
+    private UnlockReceiver mUnlockReceiver;
     private IntentFilter filter;
     private boolean mReceiverRegistered = false;
 
@@ -169,18 +167,13 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
                 if (!mGlowPadLock) {
                     mGlowPadLock = true;
                     mLongPress = true;
-                    if (mReceiverRegistered) {
-                        mContext.unregisterReceiver(receiver);
-                        launchAction(longActivities[mTarget]);
-                        mReceiverRegistered = false;
-                    }
                  }
             }
         };
 
         public void onTrigger(View v, int target) {
             if (mReceiverRegistered) {
-                mContext.unregisterReceiver(receiver);
+                mContext.unregisterReceiver(mUnlockReceiver);
                 mReceiverRegistered = false;
             }
             
@@ -235,6 +228,11 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
         public void onReleased(View v, int handle) {
             if (!mIsBouncing) {
                 doTransition(mFadeView, 1.0f);
+            }
+            if (mReceiverRegistered) {
+                mContext.unregisterReceiver(mUnlockReceiver);
+                launchAction(longActivities[mTarget]);
+                mReceiverRegistered = false;
             }
         }
 
@@ -360,8 +358,10 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
         mUnlockBroadcasted = false;
         filter = new IntentFilter();
         filter.addAction(UnlockReceiver.ACTION_UNLOCK_RECEIVER);
-        receiver = new UnlockReceiver();
-        mContext.registerReceiver(receiver, filter);
+        if (mUnlockReceiver == null) {
+            mUnlockReceiver = new UnlockReceiver();
+        }
+        mContext.registerReceiver(mUnlockReceiver, filter);
         mReceiverRegistered = true;
     }
 
@@ -632,11 +632,22 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
     @Override
     public void onPause() {
         KeyguardUpdateMonitor.getInstance(getContext()).removeCallback(mInfoCallback);
+        if (mReceiverRegistered) {
+            mContext.unregisterReceiver(mUnlockReceiver);
+            mReceiverRegistered = false;
+        }
     }
 
     @Override
     public void onResume(int reason) {
         KeyguardUpdateMonitor.getInstance(getContext()).registerCallback(mInfoCallback);
+        if (!mReceiverRegistered) {
+            if (mUnlockReceiver == null) {
+               mUnlockReceiver = new UnlockReceiver();
+            }
+            mContext.registerReceiver(mUnlockReceiver, filter);
+            mReceiverRegistered = true;
+        }
     }
 
     @Override
@@ -671,7 +682,7 @@ public class KeyguardSelectorView extends LinearLayout implements KeyguardSecuri
                 }
             }
             if (mReceiverRegistered) {
-                mContext.unregisterReceiver(receiver);
+                mContext.unregisterReceiver(mUnlockReceiver);
                 mReceiverRegistered = false;
             }
         }
